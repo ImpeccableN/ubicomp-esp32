@@ -1,70 +1,68 @@
+#include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
-
-const char* ssid = "ESP32-Control";
-const char* password = "12345678";
-
-const int CONTROL_PIN = 26;
+#include "ui.h"
 
 WebServer server(80);
 
-String htmlPage = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-<title>ESP32 Pin Control</title>
-<style>
-body { font-family: Arial; text-align: center; padding-top: 30px; }
-button {
-  width: 120px; height: 50px;
-  font-size: 20px; margin: 10px;
-}
-</style>
-</head>
-<body>
-<h2>ESP32 Pin Toggle</h2>
-<button onclick="location.href='/on'">ON</button>
-<button onclick="location.href='/off'">OFF</button>
-</body>
-</html>
-)rawliteral";
+const int dacPin = 26;
+float frequency = 440.0;
+float volume = 0.1;
+float phase = 0;
+bool isPlaying = false;
 
-void handleRoot() {
-  server.send(200, "text/html", htmlPage);
-}
-
-void handleOn() {
-  digitalWrite(CONTROL_PIN, HIGH);
-  server.send(200, "text/html", htmlPage);
-}
-
-void handleOff() {
-  digitalWrite(CONTROL_PIN, LOW);
-  server.send(200, "text/html", htmlPage);
+void handleSet() {
+    if (server.hasArg("frequency")) {
+        frequency = server.arg("frequency").toFloat();
+    }
+    if (server.hasArg("volume")) {
+        volume = server.arg("volume").toFloat();
+    }
+    if (server.hasArg("playback")) {
+        isPlaying = (server.arg("playback") == "1");
+    }
+    
+    Serial.print("Update Received -> ");
+    Serial.print("Status: "); Serial.print(isPlaying ? "RUNNING" : "STOPPED");
+    Serial.print(" | Freq: "); Serial.print(frequency);
+    Serial.print("Hz | Vol: "); Serial.print(volume * 100);
+    Serial.println("%");
+                  
+    server.send(200, "text/plain", "OK");
 }
 
 void setup() {
-  Serial.begin(115200);
+    Serial.begin(115200);
+    WiFi.softAP("ESP32-Tone-Gen", "12345678");
 
-  pinMode(CONTROL_PIN, OUTPUT);
-  digitalWrite(CONTROL_PIN, LOW);
+    server.on("/", []() { server.send(200, "text/html", INDEX_HTML); });
+    server.on("/style.css", []() { server.send(200, "text/css", STYLE_CSS); });
+    server.on("/script.js", []() { server.send(200, "application/javascript", SCRIPT_JS); });
+    server.on("/set", handleSet);
 
-  Serial.println("Starting Access Point...");
-
-  // Start WiFi Access Point
-  WiFi.softAP(ssid, password);
-
-  Serial.print("AP IP address: ");
-  Serial.println(WiFi.softAPIP()); // should print 192.168.4.1
-
-  server.on("/", handleRoot);
-  server.on("/on", handleOn);
-  server.on("/off", handleOff);
-
-  server.begin();
-  Serial.println("Web server started!");
+    server.begin();
+    Serial.println("\n===========================");
+    Serial.println("Tone Generator Initialized");
+    Serial.print("Access URL: http://");
+    Serial.println(WiFi.softAPIP());
+    Serial.println("===========================");
 }
 
 void loop() {
-  server.handleClient();
+    server.handleClient();
+
+    if (isPlaying) {
+        static unsigned long lastMicros = 0;
+        unsigned long currentMicros = micros();
+        float deltaTime = (currentMicros - lastMicros) / 1000000.0;
+        lastMicros = currentMicros;
+
+        phase += 2.0 * PI * frequency * deltaTime;
+        if (phase > 2.0 * PI) phase -= 2.0 * PI;
+
+        int val = 128 + (int)(volume * 127.0 * sin(phase));
+        dacWrite(dacPin, val);
+    } else {
+        dacWrite(dacPin, 128);
+    }
 }
