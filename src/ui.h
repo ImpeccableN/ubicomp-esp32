@@ -15,7 +15,7 @@ const char INDEX_HTML[] = R"=====(
     
     <div class="group">
         <h3>Frequency: <span id="freqVal">440</span> Hz</h3>
-        <input type="range" id="freqSlider" min="100" max="2000" value="440">
+        <input type="range" id="freqSlider" min="0" max="2000" value="100">
     </div>
 
     <div class="group">
