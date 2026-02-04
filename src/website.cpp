@@ -57,7 +57,8 @@ void setup() {
 
   server.on("/", []() { server.send(200, "text/html", INDEX_HTML); });
   server.on("/style.css", []() { server.send(200, "text/css", STYLE_CSS); });
-  server.on("/script.js", []() { server.send(200, "application/javascript", SCRIPT_JS); });
+  server.on("/script.js",
+            []() { server.send(200, "application/javascript", SCRIPT_JS); });
   server.on("/set", handleSet);
   server.on("/status", handleStatus);
 
@@ -79,30 +80,48 @@ float mapMicToFreq(float amplitude) {
   return targetFreq;
 }
 
+const int sampleWindow = 50;
+unsigned int signalMax = 0;
+unsigned int signalMin = 4096;
+unsigned long startMillis = 0;
+
 void processMicrophone() {
-  int raw = analogRead(micPin);
+  if (millis() - startMillis >= sampleWindow) {
+    int peakToPeak = signalMax - signalMin;
 
-  // (MAX9814 mic/amp has bias of 1.25V. 1.25/3.3 * 4096 ~= 1551)
-  const int dcOffset = 1551;
-  int amplitude = abs(raw - dcOffset);
+    const int noiseThreshold = 100;
+    if (peakToPeak < noiseThreshold) {
+      peakToPeak = 0;
+    }
 
-  static float smoothedAmp = 0;
-  smoothedAmp = (smoothedAmp * 0.9) + (amplitude * 0.1);
-  micValue = (int)smoothedAmp;
+    static float smoothedAmp = 0;
+    smoothedAmp = (smoothedAmp * 0.7) + (peakToPeak * 0.3);
+    micValue = (int)smoothedAmp;
+    if (micControlEnabled) {
+      float targetFreq = mapMicToFreq(smoothedAmp);
+      frequency = frequency * 0.9 + targetFreq * 0.1;
+    }
+    Serial.print("Min:");
+    Serial.print(signalMin);
+    Serial.print(" Max:");
+    Serial.print(signalMax);
+    Serial.print(" Amp:");
+    Serial.println(micValue);
 
-  if (micControlEnabled) {
-    float targetFreq = mapMicToFreq(smoothedAmp);
-    frequency = frequency * 0.9 + targetFreq * 0.1;
+    signalMax = 0;
+    signalMin = 4096;
+    startMillis = millis();
   }
 
-  static unsigned long lastLog = 0;
-  if (millis() - lastLog > 50) {
-    Serial.print("Raw:");
-    Serial.print(raw);
-    Serial.print(",");
-    Serial.print("Amp:");
-    Serial.println((int)smoothedAmp);
-    lastLog = millis();
+  int raw = analogRead(micPin);
+
+  if (raw < 4096) {
+    if (raw > signalMax) {
+      signalMax = raw;
+    }
+    if (raw < signalMin) {
+      signalMin = raw;
+    }
   }
 }
 
@@ -117,7 +136,8 @@ void loop() {
     lastMicros = currentMicros;
 
     phase += 2.0 * PI * frequency * deltaTime;
-    if (phase > 2.0 * PI) phase -= 2.0 * PI;
+    if (phase > 2.0 * PI)
+      phase -= 2.0 * PI;
 
     int val = 128 + (int)(volume * 127.0 * sin(phase));
     dacWrite(dacPin, val);
