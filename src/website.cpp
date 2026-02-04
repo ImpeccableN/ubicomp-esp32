@@ -1,3 +1,4 @@
+#include "images.h"
 #include "ui.h"
 #include <Arduino.h>
 #include <WebServer.h>
@@ -59,6 +60,20 @@ void setup() {
   server.on("/style.css", []() { server.send(200, "text/css", STYLE_CSS); });
   server.on("/script.js",
             []() { server.send(200, "application/javascript", SCRIPT_JS); });
+
+  server.on("/img/low.jpg", []() {
+    server.send_P(200, "image/jpeg", (const char *)img_low_jpg,
+                  img_low_jpg_len);
+  });
+  server.on("/img/mid.jpg", []() {
+    server.send_P(200, "image/jpeg", (const char *)img_mid_jpg,
+                  img_mid_jpg_len);
+  });
+  server.on("/img/high.jpg", []() {
+    server.send_P(200, "image/jpeg", (const char *)img_high_jpg,
+                  img_high_jpg_len);
+  });
+
   server.on("/set", handleSet);
   server.on("/status", handleStatus);
 
