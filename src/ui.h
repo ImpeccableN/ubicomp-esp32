@@ -11,15 +11,16 @@ const char INDEX_HTML[] = R"=====(
 </head>
 <body>
     <h1>ESP32 Chladni Generator</h1>
-    <button id="mainBtn" class="btn start">START TONE</button>
-
+    
     <div class="tabs">
-        <button class="tab-btn active" onclick="openTab('presets')">Presets</button>
+        <button class="tab-btn active" onclick="openTab('presets')">Presets (Manual)</button>
         <button class="tab-btn" onclick="openTab('mic')">Microphone</button>
     </div>
 
     <!-- PRESETS TAB -->
     <div id="presets" class="tab-content active">
+        <button id="manualBtn" class="btn start">START MANUAL MODE</button>
+
         <div class="group">
             <h3>Frequency Presets</h3>
             
@@ -55,7 +56,7 @@ const char INDEX_HTML[] = R"=====(
         <div class="group">
             <h3>Microphone Control</h3>
             <p>Control frequency with voice pitch/volume.</p>
-            <button id="micBtn" class="btn start">Enable Mic Control</button>
+            <button id="micBtn" class="btn start">START MIC MODE</button>
         </div>
 
         <div class="group">
@@ -130,21 +131,41 @@ let playing = false;
 let micActive = false;
 let lastSend = 0;
 
-const btn = document.getElementById('mainBtn');
+const manualBtn = document.getElementById('manualBtn');
 const micBtn = document.getElementById('micBtn');
 const freqSlider = document.getElementById('freqSlider');
 const volSlider = document.getElementById('volSlider');
 const freqVal = document.getElementById('freqVal');
 const volVal = document.getElementById('volVal');
 
+// Reset everything to stop
+function stopAll() {
+    playing = false;
+    micActive = false;
+    
+    manualBtn.innerText = 'START MANUAL MODE';
+    manualBtn.className = 'btn start';
+    
+    micBtn.innerText = 'START MIC MODE';
+    micBtn.className = 'btn start';
+    
+    fetch('/set?playback=0&micEnabled=0');
+    
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+    }
+}
+
 // Tabs
 function openTab(tabName) {
+    stopAll(); // Stop audio when switching tabs
+    
     document.querySelectorAll('.tab-content').forEach(d => d.style.display = 'none');
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     
     document.getElementById(tabName).style.display = 'block';
     
-    // Find button that calls this function (hacky but works)
     const btns = document.querySelectorAll('.tab-btn');
     if(tabName === 'presets') btns[0].classList.add('active');
     else btns[1].classList.add('active');
@@ -179,11 +200,22 @@ function updateStatus() {
         .catch(err => console.error('Status fetch failed', err));
 }
 
-btn.onclick = () => {
+manualBtn.onclick = () => {
     playing = !playing;
-    btn.innerText = playing ? 'STOP TONE' : 'START TONE';
-    btn.className = playing ? 'btn stop' : 'btn start';
-    fetch(`/set?playback=${playing ? 1 : 0}`);
+    // Ensure mic is off if manual started (safety)
+    micActive = false; 
+    
+    manualBtn.innerText = playing ? 'STOP MANUAL MODE' : 'START MANUAL MODE';
+    manualBtn.className = playing ? 'btn stop' : 'btn start';
+    
+    fetch(`/set?playback=${playing ? 1 : 0}&micEnabled=0`);
+    
+    // Also start polling if playing manually to see frequency updates
+    if (playing) {
+         if (!pollInterval) pollInterval = setInterval(updateStatus, 200);   
+    } else {
+        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    }
 };
 
 freqSlider.oninput = (e) => {
@@ -198,20 +230,20 @@ volSlider.oninput = (e) => {
 
 micBtn.onclick = () => {
     micActive = !micActive;
+    playing = micActive; // Mic mode implies playing
+    
     if (micActive) {
-        micBtn.innerText = "Disable Mic Control";
+        micBtn.innerText = "STOP MIC MODE";
         micBtn.className = "btn stop";
-        fetch('/set?micEnabled=1');
+        fetch('/set?playback=1&micEnabled=1');
         if (!pollInterval) pollInterval = setInterval(updateStatus, 100);
     } else {
-        micBtn.innerText = "Enable Mic Control";
+        micBtn.innerText = "START MIC MODE";
         micBtn.className = "btn start";
-        fetch('/set?micEnabled=0');
+        fetch('/set?playback=0&micEnabled=0');
+        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     }
 };
-
-// Always poll efficiently
-if (!pollInterval) pollInterval = setInterval(updateStatus, 200);
 
 function drawGraph() {
     const w = canvas.width;
