@@ -1,8 +1,11 @@
+#include "driver/i2s.h"
 #include "images.h"
 #include "ui.h"
 #include <Arduino.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <cmath>
+#include <cstring>
 
 WebServer server(80);
 
@@ -10,10 +13,58 @@ const int dacPin = 26;
 const int micPin = 33;
 float frequency = 440.0;
 float volume = 0.1;
-float phase = 0;
+// I2S Configuration
+#define I2S_NUM I2S_NUM_0
+#define SAMPLE_RATE 44100
+#define I2S_DMA_BUF_COUNT 8
+#define I2S_DMA_BUF_LEN 64
+
 bool isPlaying = false;
 bool micControlEnabled = false;
 int micValue = 0;
+
+void audioTask(void *pvParameters) {
+  size_t bytesWritten;
+  uint16_t buffer[I2S_DMA_BUF_LEN];
+  float localPhase = 0;
+  bool i2sRunning =
+      true; // Driver installed in setup() starts running by default
+
+  while (true) {
+    if (isPlaying) {
+      if (!i2sRunning) {
+        i2s_start(I2S_NUM);
+        i2sRunning = true;
+      }
+
+      float phaseIncrement = 2.0 * PI * frequency / SAMPLE_RATE;
+
+      for (int i = 0; i < I2S_DMA_BUF_LEN; i++) {
+        localPhase += phaseIncrement;
+        if (localPhase >= 2.0 * PI)
+          localPhase -= 2.0 * PI;
+
+        int val = 127 + (int)(volume * 127.0 * sin(localPhase));
+        buffer[i] = val << 8;
+      }
+
+      i2s_write(I2S_NUM, buffer, sizeof(buffer), &bytesWritten, portMAX_DELAY);
+    } else {
+      if (i2sRunning) {
+        // Write one buffer of silence to settle DAC before stopping
+        for (int i = 0; i < I2S_DMA_BUF_LEN; i++)
+          buffer[i] = 127 << 8;
+
+        i2s_write(I2S_NUM, buffer, sizeof(buffer), &bytesWritten,
+                  portMAX_DELAY);
+
+        i2s_stop(I2S_NUM);
+        i2sRunning = false;
+      }
+      vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+  }
+}
 
 void handleSet() {
   if (server.hasArg("frequency")) {
@@ -78,6 +129,31 @@ void setup() {
   server.on("/status", handleStatus);
 
   server.begin();
+
+  // I2S Setup
+  i2s_config_t i2s_config = {
+      .mode =
+          (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN),
+      .sample_rate = SAMPLE_RATE,
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+      .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
+      .communication_format = I2S_COMM_FORMAT_STAND_MSB,
+      .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+      .dma_buf_count = I2S_DMA_BUF_COUNT,
+      .dma_buf_len = I2S_DMA_BUF_LEN,
+      .use_apll = false,
+      .tx_desc_auto_clear = true,
+      .fixed_mclk = 0};
+
+  i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
+  i2s_set_pin(I2S_NUM, NULL); // INTERNAL_DAC Mode
+  i2s_set_dac_mode(
+      I2S_DAC_CHANNEL_BOTH_EN); // I2S_DAC_CHANNEL_RIGHT_EN (GPIO26)
+
+  xTaskCreatePinnedToCore(audioTask, "AudioTask", 4096, NULL, 1, NULL,
+                          1 // Pin to Core 1 (App Core)
+  );
+
   Serial.println("\n===========================");
   Serial.println("Tone Generator Initialized");
   Serial.print("Access URL: http://");
@@ -143,20 +219,4 @@ void processMicrophone() {
 void loop() {
   server.handleClient();
   processMicrophone();
-
-  if (isPlaying) {
-    static unsigned long lastMicros = 0;
-    unsigned long currentMicros = micros();
-    float deltaTime = (currentMicros - lastMicros) / 1000000.0;
-    lastMicros = currentMicros;
-
-    phase += 2.0 * PI * frequency * deltaTime;
-    if (phase > 2.0 * PI)
-      phase -= 2.0 * PI;
-
-    int val = 128 + (int)(volume * 127.0 * sin(phase));
-    dacWrite(dacPin, val);
-  } else {
-    dacWrite(dacPin, 128);
-  }
 }
