@@ -264,6 +264,8 @@ function drawGraph() {
     }
     ctx.stroke();
 }
+
+setInterval(updateStatus, 100);
 )=====";
 
 #endif
